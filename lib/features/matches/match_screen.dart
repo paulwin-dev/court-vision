@@ -1,6 +1,10 @@
+import 'package:ace/features/matches/match_classes.dart';
 import "package:flutter/material.dart";
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:async';
+import 'package:ace/shared/storage/app_storage.dart';
 
 enum MatchActionState {
   decideFirstServe,
@@ -10,6 +14,7 @@ enum MatchActionState {
   rallyLocalPlayerWin,
   rallyLocalPlayerLose,
   rallyLocalPlayerLossType,
+  matchComplete,
 }
 
 class MatchSnapshot {
@@ -34,12 +39,13 @@ class MatchSnapshot {
 class MatchScreenPage extends StatefulWidget {
   final String opponentName;
   final String matchPreset;
-  final String localPlayerName = "Paul";
+  final String localPlayerName;
 
   const MatchScreenPage({
     super.key,
     required this.opponentName,
     required this.matchPreset,
+    required this.localPlayerName,
   });
 
   @override
@@ -47,8 +53,19 @@ class MatchScreenPage extends StatefulWidget {
 }
 
 class MatchScreenPageState extends State<MatchScreenPage> {
+  List<MatchSet> allSets = [];
+  List<MatchGame> currentSetGames = [];
+  List<MatchPoint> currentGamePoints = [];
+
+  PointType lastPointType = PointType.normal;
+
   MatchActionState currentActionState = MatchActionState.decideFirstServe;
   String serverName = "";
+
+  final Stopwatch _rallyStopwatch = Stopwatch();
+  Timer? _uiTimer;
+
+  late MatchPreset preset;
 
   late String player1Short;
   late String opponentShort;
@@ -59,9 +76,26 @@ class MatchScreenPageState extends State<MatchScreenPage> {
   int gamePointsP1 = 0;
   int gamePointsOpp = 0;
 
+  bool isTiebreak = false;
+  int tiebreakTarget = -1;
+
   List<MatchSnapshot> history = [];
 
-  // 2. Helper to save the snapshot
+  @override
+  void initState() {
+    super.initState();
+
+    AppStorage.getSavedPresets().then((val) {
+      preset = val.firstWhere((el) => el.id == widget.matchPreset);
+    });
+  }
+
+  @override
+  void dispose() {
+    _uiTimer?.cancel();
+    super.dispose();
+  }
+
   void _saveState() {
     history.add(
       MatchSnapshot(
@@ -283,6 +317,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                       onPressed: () {
                         _saveState();
                         _pointWonBy(serverName == widget.localPlayerName);
+                        lastPointType = PointType.ace;
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
                     ),
@@ -297,6 +332,14 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                         _saveState();
                         setState(() {
                           currentActionState = MatchActionState.rally;
+                          _rallyStopwatch.reset();
+                          _rallyStopwatch.start();
+                          _uiTimer = Timer.periodic(
+                            const Duration(milliseconds: 100),
+                            (timer) {
+                              setState(() {});
+                            },
+                          );
                         });
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
@@ -341,6 +384,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                       onPressed: () {
                         _saveState();
                         _pointWonBy(serverName == widget.localPlayerName);
+                        lastPointType = PointType.ace;
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
                     ),
@@ -375,6 +419,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                 onPressed: () {
                   _saveState();
                   _pointWonBy(serverName != widget.localPlayerName);
+                  lastPointType = PointType.doubleFault;
                 },
                 style: GoogleFonts.outfit(fontSize: largeText),
               ),
@@ -444,6 +489,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                         _saveState();
                         setState(() {
                           currentActionState = MatchActionState.serving;
+                          lastPointType = PointType.winner;
                         });
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
@@ -459,6 +505,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                         _saveState();
                         setState(() {
                           currentActionState = MatchActionState.serving;
+                          lastPointType = PointType.forcedError;
                         });
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
@@ -480,6 +527,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                   _saveState();
                   setState(() {
                     currentActionState = MatchActionState.serving;
+                    lastPointType = PointType.unforcedError;
                   });
                 },
                 style: GoogleFonts.outfit(fontSize: largeText),
@@ -504,6 +552,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                         _saveState();
                         setState(() {
                           currentActionState = MatchActionState.serving;
+                          lastPointType = PointType.winner;
                         });
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
@@ -520,6 +569,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                         setState(() {
                           currentActionState =
                               MatchActionState.rallyLocalPlayerLossType;
+                          lastPointType = PointType.forcedError;
                         });
                       },
                       style: GoogleFonts.outfit(fontSize: largeText),
@@ -542,6 +592,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                   setState(() {
                     currentActionState =
                         MatchActionState.rallyLocalPlayerLossType;
+                    lastPointType = PointType.unforcedError;
                   });
                 },
                 style: GoogleFonts.outfit(fontSize: largeText),
@@ -563,6 +614,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                       color: colors.surface,
                       textColor: Colors.white,
                       onPressed: () {
+                        _updateLastPointMetadata(outcome: "out");
                         _saveState();
                         setState(() {
                           currentActionState = MatchActionState.serving;
@@ -579,6 +631,7 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                       borderColor: colors.onErrorContainer,
                       textColor: Colors.red,
                       onPressed: () {
+                        _updateLastPointMetadata(outcome: "net");
                         _saveState();
                         setState(() {
                           currentActionState = MatchActionState.serving;
@@ -588,6 +641,35 @@ class MatchScreenPageState extends State<MatchScreenPage> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        );
+
+      case MatchActionState.matchComplete:
+        return Column(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              height: 100,
+              child: TextActionButton(
+                text: 'FINISH MATCH',
+                color: colors.primary,
+                textColor: Colors.black,
+                onPressed: () {
+                  Match finalResult = Match.create(
+                    playerName: widget.localPlayerName,
+                    opponentName: widget.opponentName,
+                    sets: allSets,
+                    date: DateTime.now(),
+                  );
+
+                  AppStorage.saveMatch(finalResult).then((_) {
+                    // ignore: use_build_context_synchronously
+                    context.pushReplacement("/stats/${finalResult.id}");
+                  });
+                },
+                style: GoogleFonts.outfit(fontSize: 22),
               ),
             ),
           ],
@@ -607,7 +689,10 @@ class MatchScreenPageState extends State<MatchScreenPage> {
         subtitle = "${serverName.toUpperCase()} IS SERVING";
         break;
       case MatchActionState.rally:
-        subtitle = "RALLY IN PROGRESS";
+        final elapsed = _rallyStopwatch.elapsed;
+        final seconds = elapsed.inSeconds;
+        final tenths = (elapsed.inMilliseconds % 1000) ~/ 100;
+        subtitle = "RALLY LENGTH: $seconds.${tenths}s";
         break;
       case MatchActionState.rallyLocalPlayerWin:
         subtitle = "HOW DID ${widget.localPlayerName.toUpperCase()} WIN?";
@@ -618,8 +703,11 @@ class MatchScreenPageState extends State<MatchScreenPage> {
       case MatchActionState.rallyLocalPlayerLossType:
         subtitle = "WHERE DID THE BALL GO?";
         break;
-      default:
-        subtitle = "MATCH IN PROGRESS";
+      case MatchActionState.matchComplete:
+        final winnerName = setsP1 > setsOpp
+            ? widget.localPlayerName
+            : widget.opponentName;
+        subtitle = "${winnerName.toUpperCase()} WINS THE MATCH!";
     }
 
     return Text(
@@ -633,8 +721,14 @@ class MatchScreenPageState extends State<MatchScreenPage> {
   }
 
   String formatTennisPoint(int p, int oppP) {
+    // If in a tiebreak, just show the number
+    if (isTiebreak) {
+      return p.toString();
+    }
+
+    // Standard Tennis Logic
     if (p >= 3 && oppP >= 3) {
-      if (p == oppP) return "40"; // Logic handles "Deuce" in the UI label
+      if (p == oppP) return "40";
       if (p > oppP) return "AD";
       return "40";
     }
@@ -643,6 +737,19 @@ class MatchScreenPageState extends State<MatchScreenPage> {
   }
 
   void _pointWonBy(bool isLocalPlayer) {
+    _rallyStopwatch.stop();
+    _uiTimer?.cancel();
+
+    // 1. Record the point immediately
+    currentGamePoints.add(
+      MatchPoint.create(
+        wonByLocalPlayer: isLocalPlayer,
+        serverName: serverName,
+        type: lastPointType,
+        durationMs: _rallyStopwatch.elapsedMilliseconds,
+      ),
+    );
+
     setState(() {
       if (isLocalPlayer) {
         gamePointsP1++;
@@ -650,43 +757,126 @@ class MatchScreenPageState extends State<MatchScreenPage> {
         gamePointsOpp++;
       }
 
-      // --- 1. Check if Game is over ---
-      // Standard tennis rule: Must have at least 4 points and lead by 2
-      if ((gamePointsP1 >= 4 || gamePointsOpp >= 4) &&
-          (gamePointsP1 - gamePointsOpp).abs() >= 2) {
-        if (gamePointsP1 > gamePointsOpp) {
-          gamesP1++;
-        } else {
-          gamesOpp++;
-        }
-        // Reset points for the new game
-        gamePointsP1 = 0;
-        gamePointsOpp = 0;
+      bool gameEnded = false;
+      bool setEnded = false;
 
-        // Swap server after every game
-        serverName = (serverName == widget.localPlayerName)
-            ? widget.opponentName
-            : widget.localPlayerName;
+      // --- 1. HANDLE TIEBREAK SCORING ---
+      if (isTiebreak) {
+        if ((gamePointsP1 >= tiebreakTarget ||
+                gamePointsOpp >= tiebreakTarget) &&
+            (gamePointsP1 - gamePointsOpp).abs() >= 2) {
+          if (gamePointsP1 > gamePointsOpp) {
+            setsP1++;
+            gamesP1++;
+          } else {
+            setsOpp++;
+            gamesOpp++;
+          }
+
+          gameEnded = true;
+          setEnded = true; // Tiebreaks (Set or Match) always end the set
+          isTiebreak = false;
+        } else {
+          int totalPoints = gamePointsP1 + gamePointsOpp;
+          if (totalPoints % 2 == 1) _rotateServer();
+        }
+      }
+      // --- 2. HANDLE STANDARD SCORING ---
+      else {
+        if ((gamePointsP1 >= 4 || gamePointsOpp >= 4) &&
+            (gamePointsP1 - gamePointsOpp).abs() >= 2) {
+          if (gamePointsP1 > gamePointsOpp) {
+            gamesP1++;
+          } else {
+            gamesOpp++;
+          }
+
+          gameEnded = true;
+          _rotateServer();
+
+          // Check for 6-6 (Tiebreak start)
+          if (gamesP1 == preset.gamesPerSet &&
+              gamesOpp == preset.gamesPerSet &&
+              preset.useSetTiebreak) {
+            isTiebreak = true;
+            tiebreakTarget = preset.setTiebreakTo;
+          }
+          // Check for Set End
+          else if ((gamesP1 >= preset.gamesPerSet ||
+                  gamesOpp >= preset.gamesPerSet) &&
+              (gamesP1 - gamesOpp).abs() >= 2) {
+            if (gamesP1 > gamesOpp) {
+              setsP1++;
+            } else {
+              setsOpp++;
+            }
+            setEnded = true;
+
+            int setsToWin = preset.setsToWin;
+            if (setsP1 == setsOpp &&
+                setsToWin - setsP1 == 1 &&
+                preset.useMatchTiebreak) {
+              isTiebreak = true;
+              tiebreakTarget = preset.matchTiebreakTo;
+            }
+          }
+        }
       }
 
-      // --- 2. Check if Set is over ---
-      // Standard rule: 6 games and lead by 2 (ignoring tiebreaks for now)
-      if ((gamesP1 >= 6 || gamesOpp >= 6) && (gamesP1 - gamesOpp).abs() >= 2) {
-        if (gamesP1 > gamesOpp) {
-          setsP1++;
-        } else {
-          setsOpp++;
-        }
+      // --- 3. STORE DATA STRUCTURES ---
+      if (gameEnded) {
+        currentSetGames.add(
+          MatchGame.create(
+            points: List.from(currentGamePoints),
+            isTiebreak:
+                setEnded && (gamesP1 + gamesOpp > 10), // Simple tiebreak check
+          ),
+        );
+        currentGamePoints.clear();
+        gamePointsP1 = 0;
+        gamePointsOpp = 0;
+      }
+
+      if (setEnded) {
+        allSets.add(MatchSet.create(games: List.from(currentSetGames)));
+        currentSetGames.clear();
         gamesP1 = 0;
         gamesOpp = 0;
       }
 
-      // --- 3. Reset UI State ---
-      currentActionState = MatchActionState.serving;
+      // --- 4. NAVIGATION STATE ---
+      if (setsP1 >= preset.setsToWin || setsOpp >= preset.setsToWin) {
+        currentActionState = MatchActionState.matchComplete;
+        HapticFeedback.vibrate();
+      } else {
+        currentActionState = MatchActionState.serving;
+      }
+
+      lastPointType = PointType.normal;
     });
+  }
+
+  void _updateLastPointMetadata({PointType? type, String? outcome}) {
+    if (currentGamePoints.isEmpty) return;
+
+    setState(() {
+      int lastIdx = currentGamePoints.length - 1;
+
+      currentGamePoints[lastIdx] = currentGamePoints[lastIdx].copyWith(
+        type: type,
+        shotOutcome: outcome,
+      );
+    });
+  }
+
+  void _rotateServer() {
+    serverName = (serverName == widget.localPlayerName)
+        ? widget.opponentName
+        : widget.localPlayerName;
   }
 }
 
+// ignore: must_be_immutable
 class ScoreRow extends StatelessWidget {
   final String shortName;
   int sets;
@@ -708,6 +898,7 @@ class ScoreRow extends StatelessWidget {
       color: Colors.white,
       fontWeight: FontWeight.w800,
       fontSize: 22,
+      fontFeatures: [const FontFeature.tabularFigures()],
     );
 
     final colors = Theme.of(context).colorScheme;

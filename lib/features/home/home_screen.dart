@@ -1,22 +1,12 @@
 import 'package:ace/features/matches/match_classes.dart';
 import 'package:ace/routes/router.dart';
+import 'package:ace/shared/storage/app_storage.dart';
 import "package:flutter/material.dart";
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-
-final List<RecentMatch> recentMatches = [
-  RecentMatch(
-    opponentName: 'Alex',
-    score: '6-4 7-5',
-    date: 'May 5, 2026',
-    isWin: true,
-  ),
-  RecentMatch(
-    opponentName: 'Bobby Dylannoise',
-    score: '1-6 1-6',
-    date: 'May 5, 2026',
-    isWin: false,
-  ),
-];
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 
 class HomeScreenPage extends StatefulWidget {
   const HomeScreenPage({super.key});
@@ -28,8 +18,53 @@ class HomeScreenPage extends StatefulWidget {
 class HomeScreenPageState extends State<HomeScreenPage> {
   final ExpansibleController _matchPresetExpansionController =
       ExpansibleController();
+  final TextEditingController _playerController = TextEditingController();
   final TextEditingController _opponentController = TextEditingController();
-  String selectedMatchPreset = "Default";
+
+  List<MatchPreset> availablePresets = [];
+  late String selectedMatchPresetId;
+  late String selectedMatchPresetName;
+
+  late List<Match> allMatches = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedPresets();
+
+    AppStorage.getAllMatches().then((list) {
+      setState(() {
+        allMatches = list;
+      });
+    });
+  }
+
+  Future<void> _loadSavedPresets() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? presetsJson = prefs.getString('match_presets');
+
+    if (presetsJson != null) {
+      final List<dynamic> decoded = jsonDecode(presetsJson);
+      setState(() {
+        availablePresets = decoded
+            .map((item) => MatchPreset.fromJson(item))
+            .toList();
+      });
+    } else {
+      // Default fallback if nothing is saved yet
+      setState(() {
+        availablePresets = [
+          MatchPreset(id: '1', name: 'Default', setsToWin: 2),
+          MatchPreset(
+            id: '2',
+            name: 'LK Turnier',
+            setsToWin: 2,
+            useMatchTiebreak: true,
+          ),
+        ];
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,92 +113,95 @@ class HomeScreenPageState extends State<HomeScreenPage> {
                           bottom: 8,
                         ),
                         child: ListView.builder(
-                          itemCount: recentMatches.length,
+                          itemCount: allMatches.length,
                           itemBuilder: (context, index) {
-                            final match = recentMatches[index];
-                            return Container(
-                              margin: const EdgeInsets.symmetric(
-                                vertical: 4,
-                                horizontal: 4,
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colors.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: colors.outlineVariant,
-                                  width: 1,
+                            final match = allMatches[index];
+                            return GestureDetector(
+                              onTap: () => context.push("/stats/${match.id}"),
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(
+                                  vertical: 4,
+                                  horizontal: 4,
                                 ),
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        match.opponentName,
-                                        style: GoogleFonts.outfit(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 18,
-                                        ),
-                                      ),
-                                      Text(
-                                        match.date,
-                                        style: GoogleFonts.outfit(
-                                          fontSize: 12,
-                                          color: colors.surfaceBright,
-                                        ),
-                                      ),
-                                    ],
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colors.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: colors.outlineVariant,
+                                    width: 1,
                                   ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        match.score,
-                                        style: GoogleFonts.outfit(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: match.isWin
-                                              ? colors.primary.withValues(
-                                                  alpha: 0.15,
-                                                )
-                                              : Colors.red.withValues(
-                                                  alpha: 0.15,
-                                                ),
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          match.isWin ? 'WIN' : 'LOSS',
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "${match.playerName} vs ${match.opponentName}",
                                           style: GoogleFonts.outfit(
-                                            color: match.isWin
-                                                ? colors.primary
-                                                : Colors.red,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 18,
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                        Text(
+                                          DateFormat.yMd(Localizations.localeOf(context).toString()).format(match.date),
+                                          style: GoogleFonts.outfit(
+                                            fontSize: 12,
+                                            color: colors.surfaceBright,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          match.finalScoreString,
+                                          style: GoogleFonts.outfit(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: match.isWin
+                                                ? colors.primary.withValues(
+                                                    alpha: 0.15,
+                                                  )
+                                                : Colors.red.withValues(
+                                                    alpha: 0.15,
+                                                  ),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            match.isWin ? 'WIN' : 'LOSS',
+                                            style: GoogleFonts.outfit(
+                                              color: match.isWin
+                                                  ? colors.primary
+                                                  : Colors.red,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             );
                           },
@@ -193,7 +231,9 @@ class HomeScreenPageState extends State<HomeScreenPage> {
               SizedBox(
                 width: 350,
                 child: OutlinedButton(
-                  onPressed: () {},
+                  onPressed: () {
+                    context.push("/settings").then((_) => _loadSavedPresets());
+                  },
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: colors.outline, width: 1),
                     shape: RoundedRectangleBorder(
@@ -259,7 +299,8 @@ class HomeScreenPageState extends State<HomeScreenPage> {
   StatefulBuilder buildNewMatchModal(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
 
-    selectedMatchPreset = "Default";
+    selectedMatchPresetId = availablePresets[0].id;
+    selectedMatchPresetName = availablePresets[0].name;
 
     const double headerTextSize = 18;
     const double inputTextSize = 16;
@@ -285,7 +326,7 @@ class HomeScreenPageState extends State<HomeScreenPage> {
                     fontSize: 15,
                   ),
                 ),
-                SizedBox(height: 10),
+                SizedBox(height: 30),
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
@@ -309,6 +350,42 @@ class HomeScreenPageState extends State<HomeScreenPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             SizedBox(height: 30),
+                            Text(
+                              "Player",
+                              textAlign: TextAlign.left,
+                              style: GoogleFonts.outfit(
+                                fontWeight: FontWeight.w600,
+                                fontSize: headerTextSize,
+                              ),
+                            ),
+                            SizedBox(height: 7),
+                            TextField(
+                              controller: _playerController,
+                              autofocus: true,
+                              style: GoogleFonts.outfit(
+                                fontWeight: FontWeight.w600,
+                                fontSize: inputTextSize,
+                              ),
+                              decoration: InputDecoration(
+                                filled: true,
+                                fillColor: colors.surfaceContainerHighest,
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(24),
+                                  borderSide: BorderSide(
+                                    color: colors.outlineVariant,
+                                    width: 1,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(24),
+                                  borderSide: BorderSide(
+                                    color: colors.primary,
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: 7),
                             Text(
                               "Opponent",
                               textAlign: TextAlign.left,
@@ -374,7 +451,7 @@ class HomeScreenPageState extends State<HomeScreenPage> {
                                   minTileHeight: 0,
                                   controller: _matchPresetExpansionController,
                                   title: Text(
-                                    selectedMatchPreset,
+                                    selectedMatchPresetName,
                                     style: GoogleFonts.outfit(
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -385,23 +462,36 @@ class HomeScreenPageState extends State<HomeScreenPage> {
                                     duration: const Duration(milliseconds: 200),
                                   ),
                                   trailing: SizedBox.shrink(),
-                                  children: ["Default", "LK Turnier"].map((
-                                    String value,
-                                  ) {
-                                    return ListTile(
-                                      title: Text(
-                                        value,
-                                        style: GoogleFonts.outfit(),
-                                      ),
-                                      onTap: () {
-                                        setModalState(() {
-                                          selectedMatchPreset = value;
-                                        });
-                                        _matchPresetExpansionController
-                                            .collapse();
-                                      },
-                                    );
-                                  }).toList(),
+                                  children: availablePresets.isEmpty
+                                      ? [
+                                          const ListTile(
+                                            title: Text("No Presets Found"),
+                                          ),
+                                        ]
+                                      : availablePresets.map((
+                                          MatchPreset preset,
+                                        ) {
+                                          return ListTile(
+                                            title: Text(
+                                              preset.name,
+                                              style: GoogleFonts.outfit(),
+                                            ),
+                                            subtitle: Text(
+                                              "Best of ${preset.setsToWin}",
+                                              style: GoogleFonts.outfit(
+                                                fontSize: 11,
+                                              ),
+                                            ),
+                                            onTap: () {
+                                              setModalState(() {
+                                                selectedMatchPresetId = preset.id;
+                                                selectedMatchPresetName = preset.name;
+                                              });
+                                              _matchPresetExpansionController
+                                                  .collapse();
+                                            },
+                                          );
+                                        }).toList(),
                                 ),
                               ),
                             ),
@@ -432,19 +522,21 @@ class HomeScreenPageState extends State<HomeScreenPage> {
                   width: 350,
                   child: OutlinedButton(
                     onPressed: () {
-                      final name = _opponentController.text.trim().isEmpty
+                      final playerName = _playerController.text.trim().isEmpty
+                          ? null
+                          : _playerController.text.trim();
+                      if (playerName == null) return;
+
+                      final opponentName =
+                          _opponentController.text.trim().isEmpty
                           ? null
                           : _opponentController.text.trim();
-                      if (name == null) return;
+                      if (opponentName == null) return;
 
-                      final preset = selectedMatchPreset;
+                      final preset = selectedMatchPresetId;
 
-                      // Close the modal
                       Navigator.pop(context);
-
-                      // Navigate using the dynamic path
-                      // GoRouter automatically handles the string encoding for you
-                      router.push("/match/$name/$preset");
+                      router.push("/match/$playerName/$opponentName/$preset");
                     },
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: colors.outline, width: 1),
